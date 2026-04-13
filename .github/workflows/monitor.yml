@@ -1,0 +1,40 @@
+name: 금감원 제재사례 모니터링
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # 매일 오전 09:00 KST (UTC 00:00)
+  workflow_dispatch:        # 수동 실행 버튼
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      # seen_posts.json을 캐싱해서 이미 처리한 게시글 기억
+      - name: seen_posts 캐시 복원
+        uses: actions/cache@v4
+        with:
+          path: seen_posts.json
+          key: seen-posts-${{ github.run_id }}
+          restore-keys: |
+            seen-posts-
+
+      - name: Python 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 패키지 설치
+        run: pip install -r requirements.txt
+
+      - name: 모니터링 실행
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NAVER_EMAIL:       ${{ secrets.NAVER_EMAIL }}
+          NAVER_PASSWORD:    ${{ secrets.NAVER_PASSWORD }}
+          RECIPIENT_EMAIL:   ${{ secrets.RECIPIENT_EMAIL }}
+          MY_PROFILE:        ${{ secrets.MY_PROFILE }}
+        run: python monitor.py
