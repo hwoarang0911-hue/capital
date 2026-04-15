@@ -13,15 +13,15 @@ from datetime import date
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from bs4 import BeautifulSoup
-import anthropic
+import google.generativeai as genai
 import pdfplumber
 
 # ── 환경변수 (GitHub Secrets에서 주입) ──────────────────
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
-GMAIL_EMAIL       = os.environ["GMAIL_EMAIL"]
-GMAIL_PASSWORD    = os.environ["GMAIL_PASSWORD"]
-RECIPIENT_EMAIL   = os.environ.get("RECIPIENT_EMAIL", GMAIL_EMAIL)
-MY_PROFILE        = os.environ.get("MY_PROFILE", "보험업 종사자. 관심: 불완전판매, 허위고지, 모집질서, 보험금 지급, 과태료, 설계사 제재")
+GEMINI_API_KEY  = os.environ["GEMINI_API_KEY"]
+GMAIL_EMAIL     = os.environ["GMAIL_EMAIL"]
+GMAIL_PASSWORD  = os.environ["GMAIL_PASSWORD"]
+RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL", GMAIL_EMAIL)
+MY_PROFILE      = os.environ.get("MY_PROFILE", "보험업 종사자. 관심: 불완전판매, 허위고지, 모집질서, 보험금 지급, 과태료, 설계사 제재")
 
 # ── 상수 ────────────────────────────────────────────────
 FSS_BASE     = "https://www.fss.or.kr"
@@ -89,7 +89,8 @@ def extract_pdf_text(pdf_url):
 
 
 def analyze_with_claude(pdf_text, post_title):
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel("gemini-2.5-flash-lite")
 
     prompt = f"""금융감독원 제재사례 분석 전문가입니다.
 아래 제재사례와 사용자 프로필의 관련성을 분석해 JSON만 출력하세요.
@@ -114,12 +115,8 @@ def analyze_with_claude(pdf_text, post_title):
   "sanction_type": "제재 종류"
 }}"""
 
-    msg = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=800,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    raw = msg.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+    response = model.generate_content(prompt)
+    raw = response.text.strip().replace("```json", "").replace("```", "").strip()
     return json.loads(raw)
 
 
