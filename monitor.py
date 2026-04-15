@@ -13,7 +13,7 @@ from datetime import date
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from bs4 import BeautifulSoup
-import google.generativeai as genai
+from google import genai
 import pdfplumber
 
 # ── 환경변수 (GitHub Secrets에서 주입) ──────────────────
