@@ -1,6 +1,6 @@
 """
 금감원 제재사례 자동 모니터링
-매일 게시판 크롤링 → PDF 분석 → 네이버 메일 알림
+매일 게시판 크롤링 → PDF 분석 → Gmail 알림
 """
 
 import os
@@ -18,9 +18,9 @@ import pdfplumber
 
 # ── 환경변수 (GitHub Secrets에서 주입) ──────────────────
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
-NAVER_EMAIL       = os.environ["NAVER_EMAIL"]       # yourname@naver.com
-NAVER_PASSWORD    = os.environ["NAVER_PASSWORD"]    # 네이버 앱 비밀번호
-RECIPIENT_EMAIL   = os.environ.get("RECIPIENT_EMAIL", NAVER_EMAIL)
+GMAIL_EMAIL       = os.environ["GMAIL_EMAIL"]
+GMAIL_PASSWORD    = os.environ["GMAIL_PASSWORD"]
+RECIPIENT_EMAIL   = os.environ.get("RECIPIENT_EMAIL", GMAIL_EMAIL)
 MY_PROFILE        = os.environ.get("MY_PROFILE", "보험업 종사자. 관심: 불완전판매, 허위고지, 모집질서, 보험금 지급, 과태료, 설계사 제재")
 
 # ── 상수 ────────────────────────────────────────────────
@@ -31,7 +31,6 @@ SEEN_FILE    = "seen_posts.json"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
 
-# ── 1. 게시판 크롤링 ────────────────────────────────────
 def fetch_post_list():
     res = requests.get(FSS_LIST_URL, headers=HEADERS, timeout=15)
     res.raise_for_status()
@@ -53,7 +52,6 @@ def fetch_post_list():
     return posts
 
 
-# ── 2. PDF 링크 추출 ────────────────────────────────────
 def fetch_pdf_links(post_url):
     res = requests.get(post_url, headers=HEADERS, timeout=15)
     res.raise_for_status()
@@ -69,7 +67,6 @@ def fetch_pdf_links(post_url):
     return pdf_links
 
 
-# ── 3. PDF 텍스트 추출 ──────────────────────────────────
 def extract_pdf_text(pdf_url):
     res = requests.get(pdf_url, headers=HEADERS, timeout=30)
     res.raise_for_status()
@@ -91,7 +88,6 @@ def extract_pdf_text(pdf_url):
     return text[:5000]
 
 
-# ── 4. Claude AI 관련성 분석 ────────────────────────────
 def analyze_with_claude(pdf_text, post_title):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
@@ -127,17 +123,17 @@ def analyze_with_claude(pdf_text, post_title):
     return json.loads(raw)
 
 
-# ── 5. 이메일 발송 (네이버 SMTP) ────────────────────────
 def send_email(subject, html_body):
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"]    = NAVER_EMAIL
+    msg["From"]    = GMAIL_EMAIL
     msg["To"]      = RECIPIENT_EMAIL
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-    with smtplib.SMTP_SSL("smtp.naver.com", 465) as smtp:
-        smtp.login(NAVER_EMAIL, NAVER_PASSWORD)
-        smtp.sendmail(NAVER_EMAIL, RECIPIENT_EMAIL, msg.as_string())
+    with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
+        smtp.starttls()
+        smtp.login(GMAIL_EMAIL, GMAIL_PASSWORD)
+        smtp.sendmail(GMAIL_EMAIL, RECIPIENT_EMAIL, msg.as_string())
     print(f"✅ 이메일 발송 → {RECIPIENT_EMAIL}")
 
 
@@ -183,7 +179,6 @@ def build_email_html(results, today):
     </div>"""
 
 
-# ── 6. seen_posts 관리 ──────────────────────────────────
 def load_seen():
     if os.path.exists(SEEN_FILE):
         with open(SEEN_FILE) as f:
@@ -195,7 +190,6 @@ def save_seen(seen):
         json.dump(list(seen), f, ensure_ascii=False)
 
 
-# ── 메인 ────────────────────────────────────────────────
 def main():
     today = date.today().strftime("%Y년 %m월 %d일")
     print(f"=== 금감원 모니터링 시작 ({today}) ===")
