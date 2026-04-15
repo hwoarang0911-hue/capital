@@ -2,8 +2,8 @@ name: 금감원 제재사례 모니터링
 
 on:
   schedule:
-    - cron: '0 0 * * *'   # 매일 오전 09:00 KST (UTC 00:00)
-  workflow_dispatch:        # 수동 실행 버튼
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
   monitor:
@@ -13,7 +13,6 @@ jobs:
       - name: 코드 체크아웃
         uses: actions/checkout@v4
 
-      # seen_posts.json을 캐싱해서 이미 처리한 게시글 기억
       - name: seen_posts 캐시 복원
         uses: actions/cache@v4
         with:
@@ -32,9 +31,9 @@ jobs:
 
       - name: 모니터링 실행
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          NAVER_EMAIL:       ${{ secrets.NAVER_EMAIL }}
-          NAVER_PASSWORD:    ${{ secrets.NAVER_PASSWORD }}
-          RECIPIENT_EMAIL:   ${{ secrets.RECIPIENT_EMAIL }}
-          MY_PROFILE:        ${{ secrets.MY_PROFILE }}
+          GEMINI_API_KEY:  ${{ secrets.GEMINI_API_KEY }}
+          GMAIL_EMAIL:     ${{ secrets.GMAIL_EMAIL }}
+          GMAIL_PASSWORD:  ${{ secrets.GMAIL_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          MY_PROFILE:      ${{ secrets.MY_PROFILE }}
         run: python monitor.py
