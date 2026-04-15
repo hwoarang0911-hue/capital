@@ -88,9 +88,8 @@ def extract_pdf_text(pdf_url):
     return text[:5000]
 
 
-def analyze_with_claude(pdf_text, post_title):
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-2.5-flash-lite")
+def analyze_with_gemini(pdf_text, post_title):
+    client = genai.Client(api_key=GEMINI_API_KEY)
 
     prompt = f"""금융감독원 제재사례 분석 전문가입니다.
 아래 제재사례와 사용자 프로필의 관련성을 분석해 JSON만 출력하세요.
@@ -115,7 +114,10 @@ def analyze_with_claude(pdf_text, post_title):
   "sanction_type": "제재 종류"
 }}"""
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+        model="gemini-2.5-flash-lite",
+        contents=prompt
+    )
     raw = response.text.strip().replace("```json", "").replace("```", "").strip()
     return json.loads(raw)
 
@@ -211,7 +213,7 @@ def main():
                 continue
 
             pdf_text = extract_pdf_text(pdfs[0]["url"])
-            result   = analyze_with_claude(pdf_text, post["title"])
+            result   = analyze_with_gemini(pdf_text, post["title"])
             print(f"  관련성: {result['relevance']}")
 
             results.append({
