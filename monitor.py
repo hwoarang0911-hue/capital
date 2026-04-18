@@ -1,6 +1,7 @@
 """
 금감원 제재사례 자동 모니터링
-매일 게시판 크롤링 → PDF 분석 → Gmail 알림
+- 매일 09:00, 13:00: 당일 신규 건만 확인 → 있을 때만 메일
+- 매주 금요일 10:00: 주간 게시 건 모아서 메일 (없으면 없다고 발송)
 """
 
 import os
@@ -9,26 +10,31 @@ import smtplib
 import hashlib
 import requests
 import tempfile
-from datetime import date
+from datetime import date, datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from bs4 import BeautifulSoup
 from google import genai
 import pdfplumber
 
-# ── 환경변수 (GitHub Secrets에서 주입) ──────────────────
+# ── 환경변수 ──────────────────────────────────────────────
 GEMINI_API_KEY  = os.environ["GEMINI_API_KEY"]
 GMAIL_EMAIL     = os.environ["GMAIL_EMAIL"]
 GMAIL_PASSWORD  = os.environ["GMAIL_PASSWORD"]
 RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL", GMAIL_EMAIL)
 MY_PROFILE      = os.environ.get("MY_PROFILE", "보험업 종사자. 관심: 불완전판매, 허위고지, 모집질서, 보험금 지급, 과태료, 설계사 제재")
+EVENT_SCHEDULE  = os.environ.get("GITHUB_EVENT_SCHEDULE", "")
 
-# ── 상수 ────────────────────────────────────────────────
+# ── 상수 ──────────────────────────────────────────────────
 FSS_BASE     = "https://www.fss.or.kr"
 FSS_LIST_URL = f"{FSS_BASE}/fss/job/openInfo/list.do?menuNo=200476"
 SEEN_FILE    = "seen_posts.json"
+WEEKLY_FILE  = "weekly_posts.json"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+# cron 스케줄로 실행 모드 판단
+IS_WEEKLY = "0 1 * * 5" in EVENT_SCHEDULE
 
 
 def fetch_post_list():
@@ -41,13 +47,23 @@ def fetch_post_list():
         a_tag = row.find("a", href=True)
         if not a_tag:
             continue
-        href = a_tag["href"]
+        href  = a_tag["href"]
         title = a_tag.get_text(strip=True)
+
+        # 날짜 추출 (td 중 날짜 형식 찾기)
+        post_date = None
+        for td in row.find_all("td"):
+            text = td.get_text(strip=True)
+            if len(text) == 10 and text[4] == "-" and text[7] == "-":
+                post_date = text
+                break
+
         post_id = hashlib.md5(href.encode()).hexdigest()[:12]
         posts.append({
-            "id": post_id,
+            "id":    post_id,
             "title": title,
-            "url": href if href.startswith("http") else FSS_BASE + href,
+            "url":   href if href.startswith("http") else FSS_BASE + href,
+            "date":  post_date,
         })
     return posts
 
@@ -136,7 +152,7 @@ def send_email(subject, html_body):
     print(f"✅ 이메일 발송 → {RECIPIENT_EMAIL}")
 
 
-def build_email_html(results, today):
+def build_email_html(results, title, subtitle):
     badge_text  = {"high": "🔴 관련성 높음", "medium": "🟡 관련성 보통", "low": "🟢 낮음", "none": "⚪ 없음"}
     badge_color = {"high": "#fde8e8", "medium": "#fef9e7", "low": "#f0f0f0", "none": "#f0f0f0"}
     text_color  = {"high": "#c0392b", "medium": "#9a7000", "low": "#888", "none": "#888"}
@@ -145,8 +161,6 @@ def build_email_html(results, today):
     rows = ""
 
     for r in results:
-        if r["relevance"] in ("none", "low"):
-            continue
         kws = ", ".join(r["result"].get("keywords", []))
         action_html = f"<p style='color:#c0392b;margin:8px 0 0;font-size:13px;'><strong>⚠ 권고:</strong> {r['result']['action']}</p>" if r["result"].get("action") else ""
         rows += f"""
@@ -163,13 +177,13 @@ def build_email_html(results, today):
         </div>"""
 
     if not rows:
-        rows = "<p style='color:#aaa;text-align:center;padding:48px 0;font-size:14px;'>오늘은 관련 제재사례가 없습니다.</p>"
+        rows = "<p style='color:#aaa;text-align:center;padding:48px 0;font-size:14px;'>해당 기간 관련 제재사례가 없습니다.</p>"
 
     return f"""
     <div style="font-family:sans-serif;max-width:600px;margin:0 auto;background:#f5f0e8;">
       <div style="background:#1a1a2e;color:#f5f0e8;padding:24px 32px;border-bottom:3px solid #c9a84c;">
-        <h1 style="margin:0;font-size:18px;">⚖ 금감원 제재사례 모니터링</h1>
-        <p style="margin:6px 0 0;font-size:13px;color:#aaa;">{today} &nbsp;·&nbsp; 총 {len(results)}건 분석 &nbsp;·&nbsp; 관련 {relevant_count}건</p>
+        <h1 style="margin:0;font-size:18px;">⚖ {title}</h1>
+        <p style="margin:6px 0 0;font-size:13px;color:#aaa;">{subtitle} &nbsp;·&nbsp; 총 {len(results)}건 분석 &nbsp;·&nbsp; 관련 {relevant_count}건</p>
       </div>
       <div style="padding:24px 32px;">{rows}</div>
       <div style="background:#1a1a2e;color:#555;padding:16px 32px;font-size:11px;text-align:center;">
@@ -178,70 +192,107 @@ def build_email_html(results, today):
     </div>"""
 
 
-def load_seen():
-    if os.path.exists(SEEN_FILE):
-        with open(SEEN_FILE) as f:
-            return set(json.load(f))
-    return set()
+def load_json(filepath):
+    if os.path.exists(filepath):
+        with open(filepath) as f:
+            return json.load(f)
+    return {}
 
-def save_seen(seen):
-    with open(SEEN_FILE, "w") as f:
-        json.dump(list(seen), f, ensure_ascii=False)
+def save_json(filepath, data):
+    with open(filepath, "w") as f:
+        json.dump(data, f, ensure_ascii=False)
 
 
-def main():
-    today = date.today().strftime("%Y년 %m월 %d일")
-    print(f"=== 금감원 모니터링 시작 ({today}) ===")
+def run_daily():
+    """매일 09:00, 13:00 실행 — 당일 신규 건만 처리"""
+    today_str = date.today().strftime("%Y-%m-%d")
+    print(f"=== 일간 모니터링 ({today_str}) ===")
 
-    seen  = load_seen()
+    seen  = set(load_json(SEEN_FILE).keys()) if os.path.exists(SEEN_FILE) else set()
     posts = fetch_post_list()
-    new_posts = [p for p in posts if p["id"] not in seen]
-    print(f"전체 {len(posts)}건 / 신규 {len(new_posts)}건")
+
+    # 당일 게시 + 미처리 건
+    new_posts = [
+        p for p in posts
+        if p["id"] not in seen and p.get("date") == today_str
+    ]
+    print(f"당일 신규: {len(new_posts)}건")
 
     if not new_posts:
-        print("신규 게시글 없음. 종료.")
+        print("당일 신규 없음. 메일 미발송.")
         return
 
+    seen_data  = load_json(SEEN_FILE)
+    weekly_data = load_json(WEEKLY_FILE)
     results = []
+
     for post in new_posts:
-        print(f"\n▶ {post['title']}")
+        print(f"▶ {post['title']}")
         try:
             pdfs = fetch_pdf_links(post["url"])
             if not pdfs:
-                print("  PDF 없음, 건너뜀")
-                seen.add(post["id"])
+                print("  PDF 없음")
+                seen_data[post["id"]] = today_str
                 continue
 
             pdf_text = extract_pdf_text(pdfs[0]["url"])
             result   = analyze_with_gemini(pdf_text, post["title"])
             print(f"  관련성: {result['relevance']}")
 
-            results.append({
-                "title": post["title"],
-                "url":   post["url"],
+            entry = {
+                "title":     post["title"],
+                "url":       post["url"],
+                "date":      today_str,
                 "relevance": result["relevance"],
-                "result": result,
-            })
-            seen.add(post["id"])
+                "result":    result,
+            }
+            results.append(entry)
+            seen_data[post["id"]]   = today_str
+            weekly_data[post["id"]] = entry
 
         except Exception as e:
             print(f"  오류: {e}")
-            continue
 
-    save_seen(seen)
+    save_json(SEEN_FILE, seen_data)
+    save_json(WEEKLY_FILE, weekly_data)
 
-    if not results:
-        print("분석 결과 없음.")
-        return
+    if results:
+        relevant = [r for r in results if r["relevance"] in ("high", "medium")]
+        subject  = f"[금감원 제재알림] {today_str} 신규 {len(results)}건" + (" ⚠" if relevant else "")
+        send_email(subject, build_email_html(results, "금감원 제재사례 모니터링", f"{today_str} 당일 신규"))
+
+
+def run_weekly():
+    """매주 금요일 — 주간 누적 건 발송"""
+    today = date.today()
+    week_start = (today - timedelta(days=4)).strftime("%Y-%m-%d")
+    week_end   = today.strftime("%Y-%m-%d")
+    print(f"=== 주간 리포트 ({week_start} ~ {week_end}) ===")
+
+    weekly_data = load_json(WEEKLY_FILE)
+    results = list(weekly_data.values())
+
+    # 주간 파일 초기화
+    save_json(WEEKLY_FILE, {})
 
     relevant = [r for r in results if r["relevance"] in ("high", "medium")]
     subject  = (
-        f"[금감원 제재알림] {today} · 관련 {len(relevant)}건 발견 ⚠"
-        if relevant else
-        f"[금감원 제재알림] {today} · 관련 사례 없음"
+        f"[금감원 주간리포트] {week_start}~{week_end} · {len(results)}건"
+        if results else
+        f"[금감원 주간리포트] {week_start}~{week_end} · 신규 없음"
     )
-    send_email(subject, build_email_html(results, today))
-    print("\n=== 완료 ===")
+    send_email(subject, build_email_html(
+        results,
+        "금감원 제재사례 주간 리포트",
+        f"{week_start} ~ {week_end}"
+    ))
+
+
+def main():
+    if IS_WEEKLY:
+        run_weekly()
+    else:
+        run_daily()
 
 
 if __name__ == "__main__":
