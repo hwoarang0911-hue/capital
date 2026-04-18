@@ -2,7 +2,9 @@ name: 금감원 제재사례 모니터링
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 0 * * *'    # 매일 오전 9시 KST
+    - cron: '0 4 * * *'    # 매일 오후 1시 KST
+    - cron: '0 1 * * 5'    # 매주 금요일 오전 10시 KST (주간 리포트)
   workflow_dispatch:
 
 jobs:
@@ -13,21 +15,13 @@ jobs:
       - name: 코드 체크아웃
         uses: actions/checkout@v4
 
-      - name: seen_posts 캐시 복원
-        uses: actions/cache@v4
-        with:
-          path: seen_posts.json
-          key: seen-posts-${{ github.run_id }}
-          restore-keys: |
-            seen-posts-
-
       - name: Python 설치
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: 패키지 설치
-        run: pip install -r requirements.txt
+        run: pip install --no-cache-dir -r requirements.txt
 
       - name: 모니터링 실행
         env:
@@ -36,4 +30,5 @@ jobs:
           GMAIL_PASSWORD:  ${{ secrets.GMAIL_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
           MY_PROFILE:      ${{ secrets.MY_PROFILE }}
+          GITHUB_EVENT_SCHEDULE: ${{ github.event.schedule }}
         run: python monitor.py
