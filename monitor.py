@@ -21,7 +21,7 @@ import pdfplumber
 GEMINI_API_KEY  = os.environ["GEMINI_API_KEY"]
 GMAIL_EMAIL     = os.environ["GMAIL_EMAIL"]
 GMAIL_PASSWORD  = os.environ["GMAIL_PASSWORD"]
-RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL", GMAIL_EMAIL)
+RECIPIENT_EMAILS = [e.strip() for e in os.environ.get("RECIPIENT_EMAIL", GMAIL_EMAIL).split(",") if e.strip()]
 MY_PROFILE      = os.environ.get("MY_PROFILE", "보험업 종사자. 관심: 불완전판매, 허위고지, 모집질서, 보험금 지급, 과태료, 설계사 제재")
 EVENT_SCHEDULE  = os.environ.get("GITHUB_EVENT_SCHEDULE", "")
 
@@ -142,14 +142,14 @@ def send_email(subject, html_body):
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"]    = GMAIL_EMAIL
-    msg["To"]      = RECIPIENT_EMAIL
+    msg["To"]      = ", ".join(RECIPIENT_EMAILS)
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
     with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
         smtp.starttls()
         smtp.login(GMAIL_EMAIL, GMAIL_PASSWORD)
-        smtp.sendmail(GMAIL_EMAIL, RECIPIENT_EMAIL, msg.as_string())
-    print(f"✅ 이메일 발송 → {RECIPIENT_EMAIL}")
+        smtp.sendmail(GMAIL_EMAIL, RECIPIENT_EMAILS, msg.as_string())
+    print(f"✅ 이메일 발송 → {', '.join(RECIPIENT_EMAILS)}")
 
 
 def build_email_html(results, title, subtitle):
