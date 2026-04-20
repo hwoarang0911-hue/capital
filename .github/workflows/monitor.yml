@@ -28,7 +28,7 @@ jobs:
           GEMINI_API_KEY:  ${{ secrets.GEMINI_API_KEY }}
           GMAIL_EMAIL:     ${{ secrets.GMAIL_EMAIL }}
           GMAIL_PASSWORD:  ${{ secrets.GMAIL_PASSWORD }}
-          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }},lllseanlll@naver.com
           MY_PROFILE:      ${{ secrets.MY_PROFILE }}
           GITHUB_EVENT_SCHEDULE: ${{ github.event.schedule }}
         run: python monitor.py
